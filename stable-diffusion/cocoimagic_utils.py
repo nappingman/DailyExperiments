@@ -197,6 +197,7 @@ def get_cocosnet():
         opt = pickle.load(f)
     opt['checkpoints_dir'] = "/home/v-penxiao/workspace/cocosnet4imagic/CoCosNet/checkpoints/"
     opt = argparse.Namespace(**opt)
+    opt.which_epoch = 30
     model = Pix2PixModel(opt)
     model.eval()
     for p in model.parameters():
