@@ -197,7 +197,8 @@ def get_cocosnet():
         opt = pickle.load(f)
     opt['checkpoints_dir'] = "/home/v-penxiao/workspace/cocosnet4imagic/CoCosNet/checkpoints/"
     opt = argparse.Namespace(**opt)
-    opt.which_epoch = 30
+    opt.which_epoch = 'latest'
+    # opt.name = 'universal_512_colorjitter'
     model = Pix2PixModel(opt)
     model.eval()
     for p in model.parameters():
@@ -253,8 +254,8 @@ def colorized(model, line, color, flag, output_path):
     
 def get_clip_loss(model, image, pos_prompt, neg_prompt):
     func =  Compose([
-        Resize(256,interpolation=BICUBIC),
-        CenterCrop(224),
+        Resize(224,interpolation=BICUBIC),
+        # CenterCrop(224),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
     image = (image + 1.) / 2.
@@ -267,7 +268,7 @@ def get_clip_loss(model, image, pos_prompt, neg_prompt):
     # p_cos_sim = torch.nn.functional.cosine_similarity(i_e, p_t_e).mean()
     n_cos_sim = torch.nn.functional.cosine_similarity(i_e, n_t_e).mean()
     # loss = n_cos_sim - p_cos_sim + n_cos_sim ** 2
-    # loss = n_cos_sim ** 2 + (1 - p_cos_sim)**2
+    # loss = (n_cos_sim ** 2 + (1 - p_cos_sim)**2) / 2
     # loss = (1 - p_cos_sim)**2
     loss = n_cos_sim ** 2
     # loss = - p_cos_sim ** 2
