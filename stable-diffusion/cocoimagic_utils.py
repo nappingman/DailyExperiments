@@ -22,9 +22,10 @@ except ImportError:
 import clip
 
 
-sys.path.append("../../cocosnet4imagic/CoCosNet/")
-from util.util import masktorgb
-from options.test_options import TestOptions
+# sys.path.append("../../cocosnet4imagic/CoCosNet/")
+sys.path.append("../../cocov2/CoCosNet-v2/")
+# from util.util import masktorgb
+# from options.test_options import TestOptions
 from models.pix2pix_model import Pix2PixModel
 
 def gpu_info() -> str:
@@ -196,14 +197,32 @@ def get_cocosnet():
     with open('/home/v-penxiao/workspace/cocosnet4imagic/CoCosNet/coco_opt.pkl', 'rb') as f:
         opt = pickle.load(f)
     opt['checkpoints_dir'] = "/home/v-penxiao/workspace/cocosnet4imagic/CoCosNet/checkpoints/"
+    # opt['checkpoints_dir'] = "/home/v-penxiao/workspace/cocov2/CoCosNet-v2/checkpoints/"
     opt = argparse.Namespace(**opt)
     opt.which_epoch = 'latest'
+    print(opt.which_epoch)
     # opt.name = 'universal_512_colorjitter'
+    # opt.name = 'deepfashionHD'
     model = Pix2PixModel(opt)
     model.eval()
     for p in model.parameters():
         p.requires_grad = False
     return model
+
+def get_cocosnetv2():
+    with open('/home/v-penxiao/workspace/cocov2/CoCosNet-v2/cocov2_opt.pkl', 'rb') as f:
+        opt = pickle.load(f)
+    opt['checkpoints_dir'] = "/home/v-penxiao/workspace/cocov2/CoCosNet-v2/checkpoints/"
+    opt = argparse.Namespace(**opt)
+    opt.which_epoch = 'latest'
+    print(opt.which_epoch)
+    opt.name = 'deepfashionHD'
+    model = Pix2PixModel(opt)
+    model.eval()
+    for p in model.parameters():
+        p.requires_grad = False
+    return model
+
 
 def coordinate(img: np.array,
                 color_space: str) -> np.array:
@@ -251,26 +270,27 @@ def colorized(model, line, color, flag, output_path):
         # base_count += 1
     return imgs
 
+
     
 def get_clip_loss(model, image, pos_prompt, neg_prompt):
     func =  Compose([
         Resize(224,interpolation=BICUBIC),
         # CenterCrop(224),
-        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+        # Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
     image = (image + 1.) / 2.
     image = func(image)
 
     i_e = model.encode_image(image)
-    neg_prompt = "a grayscale photo"
-    # p_t_e = model.encode_text(clip.tokenize(pos_prompt).to(image.device))
+    neg_prompt = "a grayscale photo "
+    p_t_e = model.encode_text(clip.tokenize(pos_prompt).to(image.device))
     n_t_e = model.encode_text(clip.tokenize(neg_prompt).to(image.device))
-    # p_cos_sim = torch.nn.functional.cosine_similarity(i_e, p_t_e).mean()
+    p_cos_sim = torch.nn.functional.cosine_similarity(i_e, p_t_e).mean()
     n_cos_sim = torch.nn.functional.cosine_similarity(i_e, n_t_e).mean()
     # loss = n_cos_sim - p_cos_sim + n_cos_sim ** 2
-    # loss = (n_cos_sim ** 2 + (1 - p_cos_sim)**2) / 2
+    loss = (n_cos_sim ** 2 + (1 - p_cos_sim)**2) / 2
     # loss = (1 - p_cos_sim)**2
-    loss = n_cos_sim ** 2
+    # loss = n_cos_sim ** 2
     # loss = - p_cos_sim ** 2
     return loss
 
