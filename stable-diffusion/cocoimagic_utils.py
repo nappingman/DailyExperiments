@@ -12,8 +12,12 @@ from einops import rearrange
 import torch.nn.functional as F
 from itertools import islice
 from torchvision.utils import save_image
+from torch.nn.functional import normalize  
 from ldm.util import instantiate_from_config
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+import torch  
+import torch.nn as nn  
+  
 try:
     from torchvision.transforms import InterpolationMode
     BICUBIC = InterpolationMode.BICUBIC
@@ -201,7 +205,7 @@ def get_cocosnet():
     opt = argparse.Namespace(**opt)
     opt.which_epoch = 'latest'
     print(opt.which_epoch)
-    # opt.name = 'universal_512_colorjitter'
+    opt.name = 'universal_512_colorjitter'
     # opt.name = 'deepfashionHD'
     model = Pix2PixModel(opt)
     model.eval()
@@ -216,7 +220,8 @@ def get_cocosnetv2():
     opt = argparse.Namespace(**opt)
     opt.which_epoch = 'latest'
     print(opt.which_epoch)
-    opt.name = 'deepfashionHD'
+    opt.name = 'XXX_deepfashionHD'
+    # opt.name = 'deepfashionHD'
     model = Pix2PixModel(opt)
     model.eval()
     for p in model.parameters():
@@ -270,27 +275,70 @@ def colorized(model, line, color, flag, output_path):
         # base_count += 1
     return imgs
 
+# class ContrastiveLoss(nn.Module):  
+#     def __init__(self, margin=1.0):  
+#         super(ContrastiveLoss, self).__init__()  
+#         self.margin = margin  
 
-    
-def get_clip_loss(model, image, pos_prompt, neg_prompt):
+#     def forward(self, output1, output2, label):  
+#         euclidean_distance = nn.functional.pairwise_distance(output1, output2)  
+#         loss_contrastive = torch.mean((1-label) * torch.pow(euclidean_distance, 2) +  
+#                                         (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))  
+
+#         return loss_contrastive  
+
+class CrossEntropyLossWithTemperature(nn.Module):  
+    def __init__(self, temperature=1.0):  
+        super(CrossEntropyLossWithTemperature, self).__init__()  
+        self.temperature = temperature  
+  
+    def forward(self, anchor, positive, negatives):  
+        dot_product_positive = torch.matmul(anchor, positive.t())  
+        dot_product_negatives = torch.matmul(anchor, negatives.t())  
+        logits = torch.cat((dot_product_positive, dot_product_negatives), dim=1) / self.temperature  
+        labels = torch.zeros(logits.shape[0], dtype=torch.long).to(logits.device)  
+        loss = nn.functional.cross_entropy(logits, labels, reduction='none')  
+        max_loss = -torch.log(torch.tensor(1.0 / (1 + negatives.shape[0]))).to(loss.device)  
+        normalized_loss = loss / max_loss  
+        return torch.mean(normalized_loss)  
+
+
+  
+def get_clip_loss(model, image, context_prompt):
     func =  Compose([
         Resize(224,interpolation=BICUBIC),
         # CenterCrop(224),
-        # Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
     image = (image + 1.) / 2.
     image = func(image)
 
-    i_e = model.encode_image(image)
-    neg_prompt = "a grayscale photo "
-    p_t_e = model.encode_text(clip.tokenize(pos_prompt).to(image.device))
+    # src_image = (src_image + 1.) / 2.
+    # src_image = func(src_image)
+
+    # i_e = model.encode_image(image)
+    # src_i_e = model.encode_image(src_image)
+
+    # neg_prompt = "a grayscale photograph"
+    #"brownish average colors for objects", "regional color inconsistency", "color bleeding","a faded grayscale picture","a desaturated picture lacking chromaticity", "a picture with scratches"
+    texts = [context_prompt, "a grayscale photograph", "regional color inconsistency", "color bleeding"]  
+    text_inputs = clip.tokenize(texts).to(image.device)
+    # with torch.no_grad():  
+    image_features = model.encode_image(image)
+    text_features = model.encode_text(text_inputs) 
+    criterion = CrossEntropyLossWithTemperature(temperature=1.0)  
+    loss = criterion(image_features, text_features[0:1], text_features[1:])  
+    return loss  
+
+    # p_t_e = model.encode_text(clip.tokenize(pos_prompt).to(image.device))
     n_t_e = model.encode_text(clip.tokenize(neg_prompt).to(image.device))
-    p_cos_sim = torch.nn.functional.cosine_similarity(i_e, p_t_e).mean()
+    # p_cos_sim = torch.nn.functional.cosine_similarity(i_e, p_t_e).mean()
     n_cos_sim = torch.nn.functional.cosine_similarity(i_e, n_t_e).mean()
+    # i_cos_sim = torch.nn.functional.cosine_similarity(i_e, src_i_e).mean()
     # loss = n_cos_sim - p_cos_sim + n_cos_sim ** 2
-    loss = (n_cos_sim ** 2 + (1 - p_cos_sim)**2) / 2
+    # loss = (n_cos_sim ** 2 + (1 - p_cos_sim)**2) / 2
     # loss = (1 - p_cos_sim)**2
-    # loss = n_cos_sim ** 2
+    loss = n_cos_sim ** 2
     # loss = - p_cos_sim ** 2
     return loss
 
@@ -302,3 +350,74 @@ def vgg19_loss(inp, rec, vgg19_conv2_1_relu, vgg19_conv3_1_relu):
     rec_conv3_1_feats = vgg19_conv3_1_relu(rec.contiguous())
     p_loss = 0.5 * F.mse_loss(ori_conv2_1_feats.contiguous(), rec_conv2_1_feats.contiguous()) + 0.5 * F.mse_loss(ori_conv3_1_feats.contiguous(), rec_conv3_1_feats.contiguous())
     return p_loss
+
+
+class MultiNegativeContrastiveLoss(nn.Module):  
+    def __init__(self, margin=1.0):  
+        super(MultiNegativeContrastiveLoss, self).__init__()  
+        self.margin = margin  
+  
+    def forward(self, positive_output, negative_outputs):  
+        positive_distance = torch.norm(positive_output, dim=1)  
+        negative_distances = torch.norm(negative_outputs - positive_output.unsqueeze(1), dim=2)  
+  
+        positive_loss = torch.mean(torch.pow(positive_distance, 2))  
+        negative_loss = torch.mean(torch.clamp(self.margin - negative_distances, min=0.0).pow(2).max(dim=1).values)  
+  
+        return positive_loss + negative_loss  
+
+def get_multi_clip_loss(model, image, pos_prompt):
+    func =  Compose([
+        Resize(224,interpolation=BICUBIC),
+        # CenterCrop(224),
+        # Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
+    image = (image + 1.) / 2.
+    image = func(image)
+    negative_prompts = ["a grayscale photograph"]
+                        #, "a damaged photograph", "a flawed photograph", "a photograph of chaotic colors"] 
+
+    # Encode the image  
+    with torch.no_grad():  
+        image_features = model.encode_image(image)  
+    
+    # Encode the positive prompt  
+    with torch.no_grad():  
+        positive_text_features = model.encode_text(clip.tokenize([pos_prompt]).to(image.device))  
+    
+    # Encode the negative prompts  
+    with torch.no_grad():  
+        negative_text_features = model.encode_text(clip.tokenize(negative_prompts).to(image.device))
+    
+    # Normalize the features  
+    image_features = normalize(image_features, dim=-1)  
+    positive_text_features = normalize(positive_text_features, dim=-1)  
+    negative_text_features = normalize(negative_text_features, dim=-1) 
+    # Calculate the contrastive loss  
+    loss = MultiNegativeContrastiveLoss(margin=1.0)  
+    contrastive_loss = loss(image_features, torch.cat([positive_text_features, negative_text_features]).view(1, -1, 512)) 
+    return contrastive_loss
+
+
+def get_clip_loss_2(model, processor, image):
+    func =  Compose([
+        Resize(224,interpolation=BICUBIC),
+        # CenterCrop(224),
+        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
+    image = (image + 1.) / 2.
+    image = func(image)
+
+    text_inputs = processor(text=["a grayscale photograph"], return_tensors="pt", padding=True).to(model.device)
+    image_inputs = {"pixel_values": image.unsqueeze(0)}
+
+    with torch.no_grad():  
+        outputs = model(**text_inputs, **image_inputs)  
+        text_embeddings = outputs.text_embeds  
+        image_embeddings = outputs.image_embeds  
+
+    temperature = 1.0  
+    logits = (torch.matmul(text_embeddings, image_embeddings.T) / temperature ).to(model.device)
+    labels = torch.arange(logits.shape[0]).long().to(model.device)
+    loss = torch.nn.CrossEntropyLoss()(logits, labels)  
+    return loss
