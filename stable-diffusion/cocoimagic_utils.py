@@ -26,8 +26,8 @@ except ImportError:
 import clip
 
 
-# sys.path.append("../../cocosnet4imagic/CoCosNet/")
-sys.path.append("../../cocov2/CoCosNet-v2/")
+sys.path.append("../../cocosnet4imagic/CoCosNet/")
+# sys.path.append("../../cocov2/CoCosNet-v2/")
 # from util.util import masktorgb
 # from options.test_options import TestOptions
 from models.pix2pix_model import Pix2PixModel
